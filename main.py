@@ -5,7 +5,6 @@ import requests
 
 app = FastAPI(title="Vinted & Resell Tools API")
 
-# Разрешаем запросы с твоего сайта Vercel (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,6 +14,12 @@ app.add_middleware(
 )
 
 # --- МОДЕЛИ ДАННЫХ ---
+class ManualPaymentRequest(BaseModel):
+    service_name: str     # Например: "SMS Number Vinted" или "Legit Check"
+    amount: str           # Например: "$12" или "500 UAH"
+    user_contact: str     # Telegram / Email пользователя для связи
+    receipt_info: str     # Номер транзакции, имя отправителя или ссылка на чек
+
 class OfferRequest(BaseModel):
     vinted_url: str
     offer_price: float
@@ -25,52 +30,44 @@ class SMSRequest(BaseModel):
     service: str = "vinted"
 
 
-# --- 1. ЭНДПОИНТ: ОТПРАВКА ОФФЕРА НА VINTED ---
+# --- 1. ПРИЁМ ЗАЯВКИ С ОПЛАТОЙ ПО РЕКВИЗИТАМ ---
+@app.post("/api/pay/manual-confirm")
+def manual_payment_confirm(data: ManualPaymentRequest):
+    # Здесь бэкенд фиксирует заявку
+    return {
+        "status": "success",
+        "message": "Заявка принята! Ожидайте подтверждения перевода (обычно 2–5 минут)."
+    }
+
+
+# --- 2. ЭНДПОИНТЫ VINTED И SMS ---
 @app.post("/api/vinted/send-offer")
 def send_vinted_offer(data: OfferRequest):
     try:
-        # 1. Извлекаем ID товара из ссылки Vinted
-        # Пример ссылки: https://www.vinted.com/items/123456789-jacket
         item_id = data.vinted_url.split("/items/")[1].split("-")[0]
-        
-        # 2. Формируем заголовки с Refresh Token пользователя
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Authorization": f"Bearer {data.refresh_token}",
             "Content-Type": "application/json"
         }
-        
-        # 3. Payload для Vinted API
-        payload = {
-            "price": str(data.offer_price),
-            "currency": "EUR"
-        }
-        
-        # 4. Отправляем оффер на Vinted (Замените URL при необходимости под нужный регион)
+        payload = {"price": str(data.offer_price), "currency": "EUR"}
         vinted_api_url = f"https://www.vinted.com/api/v2/items/{item_id}/offers"
         response = requests.post(vinted_api_url, json=payload, headers=headers)
         
         if response.status_code in [200, 201]:
             return {"status": "success", "message": f"Оффер €{data.offer_price} успешно отправлен!"}
         else:
-            return {
-                "status": "error", 
-                "message": f"Ошибка Vinted ({response.status_code}): {response.text}"
-            }
-            
+            return {"status": "error", "message": f"Ошибка Vinted ({response.status_code}): {response.text}"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Некорректная ссылка или ошибка: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Ошибка ссылки: {str(e)}")
 
-
-# --- 2. ЭНДПОИНТ: ПОКУПКА СМС-НОМЕРА ---
 @app.post("/api/sms/get-number")
 def get_sms_number(data: SMSRequest):
-    # Здесь подключается API ключ от SMS-Activate или 5SIM
-    # Для теста возвращаем заглушку с номером
     return {
         "status": "success",
-        "phone_number": "+48 791 234 567",
-        "order_id": "987654321",
+        "phone_number": "+44 7700 900077",
+        "order_id": "8839201",
+        "price_usd": 12.00,
         "country": data.country
     }
 
