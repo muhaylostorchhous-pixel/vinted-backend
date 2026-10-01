@@ -13,12 +13,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Простая база данных пользователей в памяти (для теста)
+users_db = {}
+
 # --- МОДЕЛИ ДАННЫХ ---
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+
 class ManualPaymentRequest(BaseModel):
-    service_name: str     # Например: "SMS Number Vinted" или "Legit Check"
-    amount: str           # Например: "$12" или "500 UAH"
-    user_contact: str     # Telegram / Email пользователя для связи
-    receipt_info: str     # Номер транзакции, имя отправителя или ссылка на чек
+    service_name: str
+    amount: str
+    user_contact: str
+    receipt_info: str
 
 class OfferRequest(BaseModel):
     vinted_url: str
@@ -30,17 +37,31 @@ class SMSRequest(BaseModel):
     service: str = "vinted"
 
 
-# --- 1. ПРИЁМ ЗАЯВКИ С ОПЛАТОЙ ПО РЕКВИЗИТАМ ---
+# --- 1. АУТЕНТИФИКАЦИЯ (ВХОД / РЕГИСТРАЦИЯ) ---
+@app.post("/api/auth/register")
+def register(data: AuthRequest):
+    if data.email in users_db:
+        raise HTTPException(status_code=400, detail="Пользователь уже существует")
+    users_db[data.email] = data.password
+    return {"status": "success", "message": "Регистрация успешна!", "email": data.email}
+
+@app.post("/api/auth/login")
+def login(data: AuthRequest):
+    if data.email not in users_db or users_db[data.email] != data.password:
+        raise HTTPException(status_code=400, detail="Неверный email или пароль")
+    return {"status": "success", "message": "Успешный вход!", "email": data.email}
+
+
+# --- 2. ПРИЁМ ЗАЯВКИ С ОПЛАТОЙ ПО РЕКВИЗИТАМ ---
 @app.post("/api/pay/manual-confirm")
 def manual_payment_confirm(data: ManualPaymentRequest):
-    # Здесь бэкенд фиксирует заявку
     return {
         "status": "success",
-        "message": "Заявка принята! Ожидайте подтверждения перевода (обычно 2–5 минут)."
+        "message": "Заявка принята! Ожидайте подтверждения (2–5 минут)."
     }
 
 
-# --- 2. ЭНДПОИНТЫ VINTED И SMS ---
+# --- 3. ЭНДПОИНТЫ VINTED И SMS ---
 @app.post("/api/vinted/send-offer")
 def send_vinted_offer(data: OfferRequest):
     try:
